@@ -1,0 +1,25 @@
+int a = 3;
+int b = 7;
+a = a + 2;
+print(a);
+
+if (a < b) {
+    print(111);
+    {
+        int x = 100;
+        print(x);
+    }
+} else {
+    print(222);
+}
+
+{
+    int a = 999;
+    print(a);
+}
+
+print(a);
+int main(){
+int a=55;
+print(a);
+}
