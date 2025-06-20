@@ -1,0 +1,110 @@
+int a = 10;
+string b = "Hello";
+bool c = true;
+
+// Print statements
+print a;
+print b;
+print c;
+
+// Variable reassignment
+a = 20;
+print a;
+
+// String concatenation
+string d = b + " World!";
+print d;
+
+// Arithmetic operations
+int e = a * 2 + 5;
+print e;
+int f = e / 3 - 2;
+print f;
+int g = (f + 3) * 4;
+print g;
+
+// Mixed-type operations
+string h = b + " " + d;
+print h;
+int i = a + 5;
+print i;
+
+// Relational operations
+bool j = a < e;
+print j;
+bool k = g == 32;
+print k;
+bool l = (a != 20);
+print l;
+
+// Logical operations
+bool m = c && k;
+print m;
+bool n = !(j || l);
+print n;
+
+// Division by zero handling
+int o = 10 / 0;
+print o;
+
+// Block statements
+{
+    int p = 100;
+    string q = "Block variable";
+    print p;
+    print q;
+    
+    {
+        int r = p * 2;
+        print r;
+    }
+}
+
+// If statements
+if (true) {
+    print a;
+}
+
+if (false) {
+    print b;
+} else {
+    print "Else branch works";
+}
+
+// While loop
+int count = 3;
+while (count > 0) {
+    print count;
+    count = count - 1;
+}
+
+// For loop
+for (int i = 0; i < 3; i = i + 1) {
+    print i;
+}
+
+// Boolean operations
+bool s = true && false;
+print s;
+bool t = true || false;
+print t;
+bool u = !true;
+print u;
+
+// String comparison
+bool v = "hello" == "world";
+print v;
+bool w = "test" != "test";
+print w;
+
+// Edge cases
+int x = -5 + 10;
+print x;
+string y = "";
+print y;
+bool z = false;
+print z;
+
+// Nested expressions
+int complex = (5 * (3 + 2) - 10) / 3;
+print complex;

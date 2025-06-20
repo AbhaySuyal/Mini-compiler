@@ -1,254 +1,345 @@
 %{
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "ast.hpp"
+#include <vector>
+#include <iostream>
+#include <cstdlib>
+#include <cstring>
 #include <map>
 #include <string>
-#include <stack>
 
 using namespace std;
 
-extern int yylex(void);
-void yyerror(const char *s);
+// Define global symbol table
+std::map<std::string, Value> variables;
 
-struct SymbolTable {
-    map<string, int> variables;
-    map<string, bool> declared;
-};
+// AST root
+ProgramNode* programRoot = nullptr;
 
-stack<SymbolTable> scopeStack;
+// Helper functions
+TokenType getTokenType(int token);
+ExpressionNode* createLiteralNode(Value value);
+ExpressionNode* createIdentifierNode(const char* name);
 
-void enterScope() {
-    scopeStack.push(SymbolTable());
-}
-
-void exitScope() {
-    scopeStack.pop();
-}
-
-bool isDeclared(const string& name) {
-    stack<SymbolTable> temp = scopeStack;
-    while (!temp.empty()) {
-        if (temp.top().declared.count(name)) return true;
-        temp.pop();
-    }
-    return false;
-}
-
-int getValue(const string& name) {
-    stack<SymbolTable> temp = scopeStack;
-    while (!temp.empty()) {
-        if (temp.top().declared.count(name)) return temp.top().variables[name];
-        temp.pop();
-    }
-    return 0;
-}
-
-void setValue(const string& name, int val) {
-    stack<SymbolTable> temp;
-    bool updated = false;
-    while (!scopeStack.empty()) {
-        SymbolTable top = scopeStack.top();
-        scopeStack.pop();
-        if (!updated && top.declared.count(name)) {
-            top.variables[name] = val;
-            updated = true;
-        }
-        temp.push(top);
-    }
-    while (!temp.empty()) {
-        scopeStack.push(temp.top());
-        temp.pop();
-    }
-}
-
+void yyerror(const char *s) { cerr << "Error: " << s << endl; }
+int yylex();
 %}
+
+%code requires {
+    #include "ast_fwd.hpp"
+}
 
 %union {
     int ival;
-    char *sval;
+    bool bval;
+    char* sval;
+    char* id;
+    ExpressionNode* expr;
+    StatementNode* stmt;
+    ProgramNode* program;
+    BlockNode* block;
+    DeclarationNode* decl;
+    AssignmentNode* assign;
 }
 
+%token <id> ID
 %token <ival> NUMBER
-%token <sval> IDENTIFIER
-%token IF ELSE WHILE FOR INT PRINT
-%token ASSIGN SEMICOLON
-%token LPAREN RPAREN LBRACE RBRACE
+%token <sval> STR_LITERAL
+%token <bval> BOOL_LITERAL
+%token PRINT IF ELSE WHILE FOR
+%token TYPE_INT TYPE_STRING TYPE_BOOL
+%token ASSIGN SEMICOLON COMMA LP RP LBRACE RBRACE
 %token PLUS MINUS MUL DIV
-%token GT LT EQ NEQ GE LE
-%token AND OR BITWISE_AND BITWISE_OR BITWISE_XOR BITWISE_SHIFT_LEFT BITWISE_SHIFT_RIGHT
-%token COMMA
-%token STRING_LITERAL
+%token EQ NEQ LT GT LE GE
+%token AND OR NOT
 
-/* Declare precedence to fix dangling else */
-%nonassoc LOWER_THAN_ELSE
-%nonassoc ELSE
+%type <program> program
+%type <block> block
+%type <stmt> statement
+%type <stmt> if_stmt
+%type <decl> declaration
+%type <assign> assignment
+%type <expr> expr
+%type <stmt> for_loop
 
 %left OR
 %left AND
-%left BITWISE_OR
-%left BITWISE_XOR
-%left BITWISE_AND
-%nonassoc EQ NEQ
-%nonassoc GT LT GE LE
-%left BITWISE_SHIFT_LEFT BITWISE_SHIFT_RIGHT
+%left EQ NEQ
+%left LT LE GT GE
 %left PLUS MINUS
 %left MUL DIV
-%right UMINUS
+%right NOT UMINUS
 
-%type <ival> expression
-%type <ival> argument_list
+%start program
 
 %%
 
 program:
-    { enterScope(); }
-    statement_list
-    { exitScope(); }
+    /* empty */ { 
+        $$ = new ProgramNode();
+        programRoot = $$;  // Set program root
+    }
+    | program statement { 
+        $1->statements.push_back($2); 
+        $$ = $1; 
+        programRoot = $1;  // Update program root
+    }
     ;
 
-statement_list:
-      /* allow zero or more statements */
-    | statement_list statement
+block:
+    LBRACE program RBRACE { 
+        auto blockNode = new BlockNode();
+        blockNode->block = $2;
+        $$ = blockNode;
+    }
     ;
 
 statement:
-      INT IDENTIFIER ASSIGN expression SEMICOLON {
-        if (isDeclared(string($2))) {
-            yyerror(("Variable already declared: " + string($2)).c_str());
-            YYABORT;
-        }
-        scopeStack.top().declared[string($2)] = true;
-        scopeStack.top().variables[string($2)] = $4;
-        printf("Declare and assign %s = %d\n", $2, $4);
+    declaration SEMICOLON { $$ = static_cast<StatementNode*>($1); }
+    | assignment SEMICOLON { $$ = static_cast<StatementNode*>($1); }
+    | PRINT expr SEMICOLON {
+        auto printNode = new PrintNode();
+        printNode->expression = $2;
+        $$ = static_cast<StatementNode*>(printNode);
+    }
+    | if_stmt
+    | WHILE LP expr RP statement {
+        auto whileNode = new WhileNode();
+        whileNode->condition = $3;
+        whileNode->body = $5;
+        $$ = static_cast<StatementNode*>(whileNode);
+    }
+    | for_loop
+    | block { $$ = static_cast<StatementNode*>($1); }
+    ;
+
+declaration:
+    TYPE_INT ID ASSIGN expr {
+        auto declNode = new DeclarationNode();
+        declNode->type = VT_INT;
+        declNode->name = $2;
+        declNode->expression = $4;
         free($2);
+        $$ = declNode;
     }
-    | IDENTIFIER ASSIGN expression SEMICOLON {
-        if (!isDeclared(string($1))) {
-            yyerror(("Undeclared variable: " + string($1)).c_str());
-            YYABORT;
-        }
-        setValue(string($1), $3);
-        printf("Assign %s = %d\n", $1, $3);
-        free($1);
-    }
-    | PRINT LPAREN expression RPAREN SEMICOLON {
-        printf("Output: %d\n", $3);
-    }
-    | IF LPAREN expression RPAREN statement %prec LOWER_THAN_ELSE {
-        printf("If statement (condition: %d)\n", $3);
-    }
-    | IF LPAREN expression RPAREN statement ELSE statement {
-        printf("If-Else statement (condition: %d)\n", $3);
-    }
-    | WHILE LPAREN expression RPAREN statement {
-        printf("While loop (condition: %d)\n", $3);
-    }
-    | FOR LPAREN simple_statement SEMICOLON expression SEMICOLON simple_statement RPAREN statement {
-        printf("For loop (init; condition: %d; increment)\n", $5);
-    }
-    | LBRACE { enterScope(); } statement_list RBRACE {
-        exitScope();
-        printf("Block statement\n");
-    }
-    | IDENTIFIER LPAREN argument_list RPAREN SEMICOLON {
-        if (!isDeclared(string($1))) {
-            yyerror(("Undeclared function: " + string($1)).c_str());
-            YYABORT;
-        }
-        printf("Calling function %s\n", $1);
-        free($1);
-    }
-    | INT IDENTIFIER LPAREN RPAREN LBRACE { enterScope(); } statement_list RBRACE {
-        scopeStack.top().declared[string($2)] = true;
-        printf("Function %s defined\n", $2);
-        exitScope();
+    | TYPE_STRING ID ASSIGN expr {
+        auto declNode = new DeclarationNode();
+        declNode->type = VT_STRING;
+        declNode->name = $2;
+        declNode->expression = $4;
         free($2);
+        $$ = declNode;
+    }
+    | TYPE_BOOL ID ASSIGN expr {
+        auto declNode = new DeclarationNode();
+        declNode->type = VT_BOOL;
+        declNode->name = $2;
+        declNode->expression = $4;
+        free($2);
+        $$ = declNode;
     }
     ;
 
-simple_statement:
-      IDENTIFIER ASSIGN expression {
-        if (!isDeclared(string($1))) {
-            yyerror(("Undeclared variable: " + string($1)).c_str());
-            YYABORT;
-        }
-        setValue(string($1), $3);
-        printf("Assign %s = %d\n", $1, $3);
+assignment:
+    ID ASSIGN expr {
+        auto assignNode = new AssignmentNode();
+        assignNode->name = $1;
+        assignNode->expression = $3;
         free($1);
-    }
-    | INT IDENTIFIER ASSIGN expression {
-        if (isDeclared(string($2))) {
-            yyerror(("Variable already declared: " + string($2)).c_str());
-            YYABORT;
-        }
-        scopeStack.top().declared[string($2)] = true;
-        scopeStack.top().variables[string($2)] = $4;
-        printf("Declare and assign %s = %d\n", $2, $4);
-        free($2);
+        $$ = assignNode;
     }
     ;
 
-argument_list:
-      expression {
-        $$ = $1;
+if_stmt:
+    IF LP expr RP statement {
+        auto ifNode = new IfNode();
+        ifNode->condition = $3;
+        ifNode->thenBranch = $5;
+        $$ = static_cast<StatementNode*>(ifNode);
     }
-    | argument_list COMMA expression {
-        $$ = $1;
-    }
-    | /* empty */ {
-        $$ = 0;
+    | IF LP expr RP statement ELSE statement {
+        auto ifNode = new IfNode();
+        ifNode->condition = $3;
+        ifNode->thenBranch = $5;
+        ifNode->elseBranch = $7;
+        $$ = static_cast<StatementNode*>(ifNode);
     }
     ;
 
-expression:
-      NUMBER {
-        $$ = $1;
+for_loop:
+    FOR LP declaration SEMICOLON expr SEMICOLON assignment RP statement {
+        auto forNode = new ForNode();
+        forNode->initialization = $3;
+        forNode->condition = $5;
+        forNode->increment = $7;
+        forNode->body = $9;
+        $$ = static_cast<StatementNode*>(forNode);
     }
-    | IDENTIFIER {
-        if (!isDeclared(string($1))) {
-            yyerror(("Undeclared variable: " + string($1)).c_str());
-            YYABORT;
-        }
-        $$ = getValue(string($1));
-        printf("Use variable %s = %d\n", $1, $$);
+    ;
+
+expr:
+    NUMBER { 
+        Value val; 
+        val.type = VT_INT; 
+        val.ival = $1; 
+        $$ = createLiteralNode(val); 
+    }
+    | STR_LITERAL { 
+        Value val; 
+        val.type = VT_STRING; 
+        val.sval = $1; 
+        $$ = createLiteralNode(val); 
         free($1);
     }
-    | expression PLUS expression { $$ = $1 + $3; }
-    | expression MINUS expression { $$ = $1 - $3; }
-    | expression MUL expression { $$ = $1 * $3; }
-    | expression DIV expression {
-        if ($3 == 0) {
-            yyerror("Division by zero");
-            YYABORT;
-        }
-        $$ = $1 / $3;
+    | BOOL_LITERAL { 
+        Value val; 
+        val.type = VT_BOOL; 
+        val.bval = $1; 
+        $$ = createLiteralNode(val); 
     }
-    | expression GT expression { $$ = $1 > $3; }
-    | expression LT expression { $$ = $1 < $3; }
-    | expression EQ expression { $$ = $1 == $3; }
-    | expression NEQ expression { $$ = $1 != $3; }
-    | expression GE expression { $$ = $1 >= $3; }
-    | expression LE expression { $$ = $1 <= $3; }
-    | expression AND expression { $$ = $1 && $3; }
-    | expression OR expression { $$ = $1 || $3; }
-    | expression BITWISE_AND expression { $$ = $1 & $3; }
-    | expression BITWISE_OR expression { $$ = $1 | $3; }
-    | expression BITWISE_XOR expression { $$ = $1 ^ $3; }
-    | expression BITWISE_SHIFT_LEFT expression { $$ = $1 << $3; }
-    | expression BITWISE_SHIFT_RIGHT expression { $$ = $1 >> $3; }
-    | MINUS expression %prec UMINUS { $$ = -$2; }
-    | LPAREN expression RPAREN { $$ = $2; }
+    | ID { $$ = createIdentifierNode($1); free($1); }
+    | expr PLUS expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(PLUS);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr MINUS expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(MINUS);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr MUL expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(MUL);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr DIV expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(DIV);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr EQ expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(EQ);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr NEQ expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(NEQ);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr LT expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(LT);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr GT expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(GT);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr LE expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(LE);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr GE expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(GE);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr AND expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(AND);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | expr OR expr { 
+        auto binOp = new BinaryOpNode();
+        binOp->op = getTokenType(OR);
+        binOp->left = $1;
+        binOp->right = $3;
+        $$ = binOp;
+    }
+    | NOT expr { 
+        auto unOp = new UnaryOpNode();
+        unOp->op = getTokenType(NOT);
+        unOp->operand = $2;
+        $$ = unOp;
+    }
+    | MINUS expr %prec UMINUS { 
+        auto unOp = new UnaryOpNode();
+        unOp->op = getTokenType(MINUS);
+        unOp->operand = $2;
+        $$ = unOp;
+    }
+    | LP expr RP { $$ = $2; }
     ;
 
 %%
 
-void yyerror(const char *s) {
-    fprintf(stderr, "Error: %s\n", s);
+TokenType getTokenType(int token) {
+    switch (token) {
+        case PLUS: return TOKEN_PLUS;
+        case MINUS: return TOKEN_MINUS;
+        case MUL: return TOKEN_MUL;
+        case DIV: return TOKEN_DIV;
+        case EQ: return TOKEN_EQ;
+        case NEQ: return TOKEN_NEQ;
+        case LT: return TOKEN_LT;
+        case GT: return TOKEN_GT;
+        case LE: return TOKEN_LE;
+        case GE: return TOKEN_GE;
+        case AND: return TOKEN_AND;
+        case OR: return TOKEN_OR;
+        case NOT: return TOKEN_NOT;
+        default: return TOKEN_EOF;
+    }
 }
 
-int main(void) {
-    enterScope();
-    yyparse();
+ExpressionNode* createLiteralNode(Value value) {
+    auto literal = new LiteralNode();
+    literal->value = value;
+    return literal;
+}
+
+ExpressionNode* createIdentifierNode(const char* name) {
+    auto idNode = new IdentifierNode();
+    idNode->name = name;
+    return idNode;
+}
+
+int main() {
+    cout << "Mini C-like Compiler Ready" << endl;
+    if (yyparse() == 0 && programRoot) {
+        try {
+            programRoot->execute();
+        } catch (const exception& e) {
+            cerr << "Runtime error: " << e.what() << endl;
+            delete programRoot;
+            return 1;
+        }
+        delete programRoot;
+    }
     return 0;
 }
